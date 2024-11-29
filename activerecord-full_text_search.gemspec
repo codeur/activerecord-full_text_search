@@ -8,7 +8,8 @@ Gem::Specification.new do |spec|
   spec.authors = ["Codeur SAS"]
   spec.email = ["dev@codeur.com"]
 
-  spec.summary = "Integrate PostgreSQL's FTS condigs with Rails"
+  spec.summary = "Integrate PostgreSQL's FTS configs with Rails"
+  spec.description = "Integrate PostgreSQL's Full Text Search configurations with Rails"
   spec.homepage = "https://github.com/codeur/activerecord-full_text_search"
   spec.license = "MIT"
 
