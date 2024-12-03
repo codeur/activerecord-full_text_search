@@ -10,6 +10,8 @@ The gem permits to use these commands:
 
 - `create_function`
 - `drop_function`
+- `create_trigger`
+- `drop_trigger`
 - `create_text_search_template`
 - `rename_text_search_template`
 - `drop_text_search_template`
@@ -31,6 +33,10 @@ The gem permits to use these commands:
 
 - Add tests
 - Enhance (and extract?) functions support
+- Enhance (and extract?) triggers support
+- Support triggers with parameterized functions
+- Support `UPDATE OF columns` in triggers
+- Support `TRUNCATE` in triggers
 - Check recorder
 - Manage schema (`public` is hardcoded)
 

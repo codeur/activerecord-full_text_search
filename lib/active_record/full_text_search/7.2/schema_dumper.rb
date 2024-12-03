@@ -17,6 +17,11 @@ module ActiveRecord
         text_search_configurations(stream)
       end
 
+      def tables(stream)
+        super
+        triggers(stream)
+      end
+
       def functions(stream)
         return unless (functions = @connection.functions).any?
 
@@ -31,6 +36,22 @@ module ActiveRecord
         end
 
         stream.puts
+      end
+
+      def triggers(stream)
+        return unless (triggers = @connection.triggers).any?
+
+        stream.puts
+        stream.puts "  # These are triggers that must be created in order to support this database"
+
+        triggers.each do |name, definition|
+          definition[:name] = name if include_trigger_name_in_dump?(definition)
+          table = definition.delete(:table)
+          function = definition.delete(:function)
+          stream.puts %(  create_trigger #{table.inspect}, #{function.inspect}, #{hash_to_string(definition)})
+        end
+
+        # stream.puts
       end
 
       def text_search_parsers(stream)
@@ -87,6 +108,10 @@ module ActiveRecord
       end
 
       private
+
+      def include_trigger_name_in_dump?(trigger_definition)
+        trigger_definition[:name] !=~ /\Atg_rails_/
+      end
 
       def hash_to_string(hash)
         hash.map { |k, v| "#{k}: #{v.inspect}" }.join(", ")

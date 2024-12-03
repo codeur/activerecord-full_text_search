@@ -6,7 +6,10 @@ module ActiveRecord
     end
 
     module SchemaStatements
-      def create_function(name_with_args, as:, volatility: :volatile, language: "sql", returns: "void", replace: true)
+      def create_function(name_with_args, as:, volatility: :volatile, language: nil, returns: :void, replace: true)
+        name_with_args = "#{name_with_args}()" unless name_with_args.to_s.include?("(")
+        language = "plpgsql" if returns == :trigger
+        language ||= "sql"
         execute(<<-SQL)
           CREATE #{"OR REPLACE" if replace} FUNCTION #{name_with_args}
           RETURNS #{returns}
@@ -18,8 +21,58 @@ module ActiveRecord
         SQL
       end
 
-      def drop_function(name_with_args, if_exists: false, cascade: false)
+      def drop_function(name_with_args, options = {})
+        if_exists = options[:if_exists]
+        cascade = options[:cascade]
         execute "DROP FUNCTION #{"IF EXISTS" if if_exists} #{name_with_args} #{"CASCADE" if cascade}"
+      end
+
+      def create_trigger(table, function, options = {})
+        raise ArgumentError, "function name is invalid" unless /\A\w+\z/.match?(function.to_s)
+        raise ArgumentError, "Must specify one and only one of the options :before, :after, or :instead_of" unless %i[before after instead_of].select { |t| options.key?(t) }.count == 1
+        raise ArgumentError, "for_each must be :row or :statement" if options[:for_each] && !%i[row statement].include?(options[:for_each])
+
+        timing = %i[before after instead_of].find { |t| options.key?(t) }
+        operations = options[timing] || raise(ArgumentError, "Must specify operations for #{timing} trigger")
+        operations.detect { |op| %i[insert update delete].exclude?(op) } && raise(ArgumentError, "Invalid operation for trigger: #{operations.inspect}")
+        for_each = "FOR EACH #{options[:for_each].to_s.upcase}" if options[:for_each]
+        if options[:deferrable] == :initially_deferred
+          deferrability = "DEFERRABLE INITIALLY DEFERRED"
+        elsif options[:deferrable] == :initially_immediate
+          deferrability = "DEFERRABLE INITIALLY IMMEDIATE"
+        elsif options[:deferrable] == true
+          deferrability = "DEFERRABLE"
+        elsif options[:deferrable] == false
+          deferrability = "NOT DEFERRABLE"
+        elsif options[:deferrable]
+          raise ArgumentError, "Invalid value for :deferrable"
+        end
+        condition = options[:when] ? "WHEN (#{options[:when]})" : ""
+        operations = [operations].flatten.map do |event|
+          if %i[insert update delete].include?(event)
+            event.to_s.upcase
+          # elsif event.is_a?(Hash)
+          #   raise ArgumentError, "Key must be :update" unless event.keys.size == 1 && event.keys.first == :update
+          #   "UPDATE OF #{[event[:update]].flatten.map { |c| quote_column_name(c) }.join(", ")}"
+          else
+            raise ArgumentError, "Unsupported event: #{event.inspect}"
+          end
+        end
+        name = options[:name] || default_trigger_name(table, function, timing, operations)
+
+        execute "CREATE TRIGGER #{name} #{timing.to_s.upcase} #{operations.join(" OR ")} ON #{table} #{for_each} #{deferrability} #{condition} EXECUTE FUNCTION #{function}()"
+      end
+
+      def drop_trigger(table, function, options = {})
+        if_exists = options[:if_exists]
+        cascade = options[:cascade]
+        if options.keys.intersect?(%i[before after instead_of])
+          raise ArgumentError, "Must specify only one of the options :before, :after, or :instead_of" unless %i[before after instead_of].select { |t| options.key?(t) }.count == 1
+          timing = %i[before after instead_of].find { |t| options.key?(t) }
+          operations = options[timing] || raise(ArgumentError, "Must specify operations for #{timing} trigger")
+        end
+        name = options[:name] || default_trigger_name(table, function, timing, operations)
+        execute "DROP TRIGGER #{"IF EXISTS" if if_exists} #{name} ON #{table} #{"CASCADE" if cascade}"
       end
 
       def create_text_search_template(name, lexize:, init: nil)
@@ -95,6 +148,19 @@ module ActiveRecord
 
       def drop_text_search_configuration(name, if_exists: false, cascade: :restrict)
         execute "DROP TEXT SEARCH CONFIGURATION #{"IF EXISTS" if if_exists} public.#{name} #{"CASCADE" if cascade == :cascade}"
+      end
+
+      def max_trigger_name_size
+        62
+      end
+
+      private
+
+      # Copied from ActiveRecord::ConnectionAdapters::Abstract::SchemaStatements#foreign_key_name
+      def default_trigger_name(table, function, timing, operations)
+        identifier = "#{table}_#{function}_#{timing}_#{operations.sort.join('_')}_tg".underscore
+        hashed_identifier = OpenSSL::Digest::SHA256.hexdigest(identifier).first(10)
+        "tg_rails_#{hashed_identifier}"
       end
     end
   end

@@ -30,6 +30,14 @@ module ActiveRecord
         record(:drop_function, args, &block)
       end
 
+      def create_trigger(*args, &block)
+        record(:create_trigger, args, &block)
+      end
+
+      def drop_trigger(*args, &block)
+        record(:drop_trigger, args, &block)
+      end
+
       def create_text_search_configuration(*args, &block)
         record(:create_text_search_configuration, args, &block)
       end
@@ -106,6 +114,14 @@ module ActiveRecord
 
       def invert_drop_function(args)
         [:create_function, args]
+      end
+
+      def invert_create_trigger(args)
+        [:drop_trigger, args]
+      end
+
+      def invert_drop_trigger(args)
+        [:create_trigger, args]
       end
 
       def invert_create_text_search_configuration(args)

@@ -31,6 +31,47 @@ module ActiveRecord
         end
       end
 
+      # See https://github.com/postgres/postgres/blob/master/src/include/commands/trigger.h
+      # and https://stackoverflow.com/questions/23634550/meanings-of-bits-in-trigger-type-field-tgtype-of-postgres-pg-trigger
+      def triggers
+        # List of triggers in the current schema with name, table name, function, timing, op, for each, condition, deferrable, initially_deferred.
+        res = exec_query(<<-SQL.strip_heredoc, "SCHEMA")
+          SELECT tgname, c.relname, proname,
+            COALESCE(
+              CASE WHEN (tgtype::int::bit(7) & b'0000010')::int = 0 THEN NULL ELSE 'before' END,
+              CASE WHEN (tgtype::int::bit(7) & b'0000010')::int = 0 THEN 'after' ELSE NULL END,
+              CASE WHEN (tgtype::int::bit(7) & b'1000000')::int = 0 THEN NULL ELSE 'instead_of' END,
+              ''
+            ) as tg_timing,
+            (CASE WHEN (tgtype::int::bit(7) & b'0000100')::int = 0 THEN '' ELSE ' insert' END)
+            || (CASE WHEN (tgtype::int::bit(7) & b'0001000')::int = 0 THEN '' ELSE ' delete' END)
+            || (CASE WHEN (tgtype::int::bit(7) & b'0010000')::int = 0 THEN '' ELSE ' update' END)
+            -- || (CASE WHEN (tgtype::int::bit(7) & b'0100000')::int = 0 THEN '' ELSE ' truncate' END)
+            AS tg_ops,
+            CASE WHEN (tgtype::int::bit(7) & b'0000001')::int = 0 THEN 'statement' ELSE 'row' END as tg_foreach,
+            pg_get_expr(tgqual, tgrelid) AS tg_condition,
+            tgdeferrable,
+            tginitdeferred
+          FROM pg_catalog.pg_trigger t
+          JOIN pg_catalog.pg_class c ON c.oid = tgrelid
+          JOIN pg_catalog.pg_proc f ON f.oid = t.tgfoid
+          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          LEFT JOIN pg_catalog.pg_depend d ON d.objid = t.oid AND d.deptype = 'e'
+          LEFT JOIN pg_catalog.pg_extension e ON e.oid = d.refobjid
+          WHERE n.nspname = ANY (current_schemas(false))
+            AND tgisinternal = FALSE
+            AND e.extname IS NULL;
+        SQL
+
+        res.rows.each_with_object({}) do |(name, table, function, timing, ops, for_each, condition, deferrable, initially_deferred), memo|
+          attributes = {table: table, function: function, for_each: for_each.to_sym}
+          attributes[:when] = condition if condition.present?
+          attributes[timing.to_sym] = ops.strip.split(/\s+/).map(&:to_sym)
+          attributes[:deferrable] = initially_deferred ? :initially_deferred : true if deferrable
+          memo[name] = attributes
+        end
+      end
+
       def text_search_parsers
         res = exec_query(<<-SQL.strip_heredoc, "SCHEMA")
           SELECT prsname, prsstart::VARCHAR, prstoken::VARCHAR, prsend::VARCHAR, prsheadline::VARCHAR, prslextype::VARCHAR
