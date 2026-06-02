@@ -49,7 +49,7 @@ module ActiveRecord
             -- || (CASE WHEN (tgtype::int::bit(7) & b'0100000')::int = 0 THEN '' ELSE ' truncate' END)
             AS tg_ops,
             CASE WHEN (tgtype::int::bit(7) & b'0000001')::int = 0 THEN 'statement' ELSE 'row' END as tg_foreach,
-            pg_get_expr(tgqual, tgrelid) AS tg_condition,
+            pg_get_triggerdef(t.oid, true) AS tg_definition,
             tgdeferrable,
             tginitdeferred
           FROM pg_catalog.pg_trigger t
@@ -63,8 +63,9 @@ module ActiveRecord
             AND e.extname IS NULL;
         SQL
 
-        res.rows.each_with_object({}) do |(name, table, function, timing, ops, for_each, condition, deferrable, initially_deferred), memo|
+        res.rows.each_with_object({}) do |(name, table, function, timing, ops, for_each, definition, deferrable, initially_deferred), memo|
           attributes = {table: table, function: function, for_each: for_each.to_sym}
+          condition = extract_trigger_condition(definition)
           attributes[:when] = condition if condition.present?
           attributes[timing.to_sym] = ops.strip.split(/\s+/).map(&:to_sym)
           attributes[:deferrable] = initially_deferred ? :initially_deferred : true if deferrable
@@ -149,6 +150,12 @@ module ActiveRecord
       end
 
       private
+
+      def extract_trigger_condition(definition)
+        return unless definition
+
+        definition[/\bWHEN\s*\((.*)\)\s+EXECUTE\s+FUNCTION\b/m, 1]
+      end
 
       def options_to_hash(text)
         text.split(/\s*,\s*/).map { |s| s.strip.split(/\s+=\s+/) }.to_h.transform_values { |v| v[1..-2] }.transform_keys(&:to_sym)

@@ -3,7 +3,7 @@ require "active_support/lazy_load_hooks"
 
 module ActiveRecord
   module FullTextSearch
-    KNOWN_VERSIONS = %w[7.2].map { |v| Gem::Version.new(v) }.freeze
+    KNOWN_VERSIONS = %w[7.2 8.0 8.1].map { |v| Gem::Version.new(v) }.freeze
 
     class << self
       attr_reader :enabled_version
