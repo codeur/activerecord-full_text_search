@@ -15,15 +15,44 @@ module ActiveRecord
       def functions
         # List of functions in the current schema with their argument types, return type, language,  immutability, and body.
         # List only functions that don't depend on extensions.
+        # Functions are ordered by dependency depth (via pg_depend) so that dependencies come first.
         res = exec_query(<<-SQL.strip_heredoc, "SCHEMA")
+          WITH RECURSIVE
+            func_deps AS (
+              SELECT p.oid AS func_oid, dep_p.oid AS dep_func_oid
+              FROM pg_catalog.pg_proc p
+              JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+              JOIN pg_catalog.pg_depend fd ON fd.objid = p.oid AND fd.deptype = 'n'
+              JOIN pg_catalog.pg_proc dep_p ON dep_p.oid = fd.refobjid
+              JOIN pg_catalog.pg_namespace dep_n ON dep_n.oid = dep_p.pronamespace
+              WHERE n.nspname = ANY (current_schemas(false))
+                AND dep_n.nspname = ANY (current_schemas(false))
+                AND p.oid != dep_p.oid
+            ),
+            levels(oid, level) AS (
+              SELECT p.oid, 0
+              FROM pg_catalog.pg_proc p
+              JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = ANY (current_schemas(false))
+                AND p.oid NOT IN (SELECT func_oid FROM func_deps)
+              UNION ALL
+              SELECT fd.func_oid, l.level + 1
+              FROM func_deps fd
+              JOIN levels l ON l.oid = fd.dep_func_oid
+            ),
+            max_levels AS (
+              SELECT oid, MAX(level) AS level FROM levels GROUP BY oid
+            )
           SELECT proname, pg_catalog.pg_get_function_arguments(p.oid) AS argtypes, pg_catalog.pg_get_function_result(p.oid) AS rettype, lanname, provolatile, prosrc
           FROM pg_catalog.pg_proc p
-          JOIN pg_catalog.pg_namespace n ON n.oid = pronamespace
-          JOIN pg_catalog.pg_language l ON l.oid = prolang
+          JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+          JOIN pg_catalog.pg_language l ON l.oid = p.prolang
           LEFT JOIN pg_catalog.pg_depend d ON d.objid = p.oid AND d.deptype = 'e'
           LEFT JOIN pg_catalog.pg_extension e ON e.oid = d.refobjid
+          JOIN max_levels ml ON ml.oid = p.oid
           WHERE n.nspname = ANY (current_schemas(false))
-            AND e.extname IS NULL;
+            AND e.extname IS NULL
+          ORDER BY ml.level, proname;
         SQL
 
         res.rows.each_with_object({}) do |(name, args, ret, lang, vol, src), memo|
@@ -60,7 +89,8 @@ module ActiveRecord
           LEFT JOIN pg_catalog.pg_extension e ON e.oid = d.refobjid
           WHERE n.nspname = ANY (current_schemas(false))
             AND tgisinternal = FALSE
-            AND e.extname IS NULL;
+            AND e.extname IS NULL
+          ORDER BY c.relname, tgname;
         SQL
 
         res.rows.each_with_object({}) do |(name, table, function, timing, ops, for_each, definition, deferrable, initially_deferred), memo|
