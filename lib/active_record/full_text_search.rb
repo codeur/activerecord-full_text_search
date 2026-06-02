@@ -5,6 +5,14 @@ module ActiveRecord
   module FullTextSearch
     KNOWN_VERSIONS = %w[7.2 8.0 8.1].map { |v| Gem::Version.new(v) }.freeze
 
+    # Maps a supported version to the directory containing its implementation.
+    # Versions that share an implementation point to the same directory.
+    VERSION_DIRECTORIES = {
+      Gem::Version.new("7.2") => "7.2",
+      Gem::Version.new("8.0") => "7.2",
+      Gem::Version.new("8.1") => "7.2",
+    }.freeze
+
     class << self
       attr_reader :enabled_version
 
@@ -39,7 +47,8 @@ module ActiveRecord
         require "active_record/full_text_search/command_recorder"
         require "active_record/full_text_search/schema_statements"
 
-        Dir[File.join(__dir__, "full_text_search", enabled_version.to_s, "*.rb")].each { |file| require file }
+        directory = VERSION_DIRECTORIES.fetch(enabled_version, enabled_version.to_s)
+        Dir[File.join(__dir__, "full_text_search", directory, "*.rb")].each { |file| require file }
         monkeypatches.keys.each { |patch| monkeypatches.delete(patch).call }
       end
 
